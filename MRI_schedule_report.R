@@ -1,5 +1,6 @@
 #!/usr/bin/env Rscript
 
+
 # Load useful libraries ----
 
 library(dplyr)
@@ -30,79 +31,112 @@ fields_ms_mri <- fields_ms_mri_raw %>% paste(collapse = ",")
 json_ms_mri <- 
   get_rc_data_api(token = REDCAP_API_TOKEN_MINDSET,
                   fields = fields_ms_mri,
-                  filterLogic = '([exam_date] >= "2017-03-01")',
-                  .opts = list(ssl.verifypeer = FALSE, verbose = FALSE))
-df_ms_mri <- jsonlite::fromJSON(json_ms_mri) %>% na_if("")
+                  vp = FALSE,
+                  # Filter for UMMAP period
+                  filterLogic = '([exam_date] >= "2017-03-01")')
+df_ms_mri <- jsonlite::fromJSON(json_ms_mri) %>% as_tibble() %>% na_if("")
 
+df_inelig <- read_csv("./zaid_inelig_ids_2.csv",
+                      col_types = cols(.default = col_character())) %>% 
+  mutate(ptid = paste0("UM0000", ID))
+inelig_ids <- df_inelig %>% pull(ptid)
 
 # Clean Data ----
 
+# _ Define different Dx codes ----
+nl_codes <- c(26, 17) # 17 = Depression
+mci_codes <- c(1, 2, 27, 28, 29, 31, 34) # 29 = ImpNoMCI
+dem_codes <- c(3, 4, 5, 6, 9, 10, 11, 12, 13, 35)
+
 df_ms_mri_cln <- df_ms_mri %>% 
+  # Keep only UM IDs
   filter(str_detect(subject_id, "^UM\\d{8}$")) %>% 
+  # Keep only UM IDs associated with UM MAP range
   filter(subject_id >= "UM00000543") %>% 
+  # Keep only participant-visit records with visit dates
   filter(!is.na(exam_date)) %>% 
-  filter(exam_date >= lubridate::as_date("2017-03-01")) %>% 
-  arrange(subject_id, exam_date, mri_date) %>% 
-  select(subject_id, -redcap_event_name, exam_date, mri_date, uds_dx)
+  arrange(subject_id, exam_date) %>% 
+  select(subject_id, -redcap_event_name, exam_date, mri_date, uds_dx) %>% 
+  # mutate `uds_dx` codes to English
+  mutate(uds_dx = case_when(
+    uds_dx %in% mci_codes ~ "MCI",
+    uds_dx %in% dem_codes ~ "Dementia",
+    uds_dx %in% nl_codes ~ "Normal",
+    !is.na(uds_dx) ~ "Other",
+    TRUE ~ NA_character_
+  )) %>% 
+  # Clean out record that has double-assigned UM MAP ID :(
+  filter(!(subject_id == "UM00001353" & exam_date == "2017-05-01"))
 
 
 # Process Data ----
 
-# _ Nest `exam_date`, `mri_date`, `uds_dx` as df ----
+# _ Nest all but `subject_id` (`exam_date`, `mri_date`, `uds_dx`) as df ----
 df_ms_mri_nest <- df_ms_mri_cln %>% 
   tidyr::nest(-subject_id)
-
-# _ Define different Dx codes ----
-nl_codes <- c(26)
-mci_codes <- c(1, 2, 27, 28, 31, 34)
-dem_codes <- c(3, 4, 5, 6, 9, 10, 11, 12, 13, 35)
 
 # _ Derive `mri_action` based on data in nested df (`data`) ----
 df_ms_mri_nest_mut <- df_ms_mri_nest %>%
   rowwise() %>%
   mutate(data_nrow = nrow(data)) %>% 
   mutate(mri_action = case_when(
-    # no `mri_date`s at all => "Never Been Scanned"
-    all(is.na(data$mri_date)) ~ "Never Been Scanned",
+    # MRI-ineligible participants
+    subject_id %in% inelig_ids ~ "Ineligible",
+    # no `mri_date`s at all => "Not Scanned"
+    all(is.na(data$mri_date)) ~ "Not Scanned",
     # 1 visit 
-    ### Normal
-    data_nrow == 1 && data$uds_dx[data_nrow] %in% nl_codes ~
+    ### NL
+    data_nrow == 1 && data$uds_dx[data_nrow] == "Normal" ~
       paste(
         "Schedule next scan ~",
-        as.character(as_date(data$exam_date[data_nrow]) + months(23))),
+        as.character(as_date(data$exam_date[data_nrow]) %m+% months(23))),
     ### MCI
-    data_nrow == 1 && data$uds_dx[data_nrow] %in% mci_codes ~
+    data_nrow == 1 && data$uds_dx[data_nrow] == "MCI" ~
       paste(
         "Schedule next scan ~",
-        as.character(as_date(data$exam_date[data_nrow]) + months(11))),
+        as.character(as_date(data$exam_date[data_nrow]) %m+% months(11))),
     ### Dem
-    data_nrow == 1 && data$uds_dx[data_nrow] %in% dem_codes ~
+    data_nrow == 1 && data$uds_dx[data_nrow] == "Dementia" ~
       "Dementia Dx: Stop Scanning",
     # 2 visits
     ### NL + NL
     data_nrow > 1 &&
-      data$uds_dx[data_nrow-1] %in% nl_codes &&
-      data$uds_dx[data_nrow] %in% nl_codes ~
+      data$uds_dx[data_nrow-1] == "Normal" &&
+      data$uds_dx[data_nrow] == "Normal" ~
       paste(
         "Schedule next scan ~",
-        as.character(as_date(data$exam_date[data_nrow]) + months(23))),
+        as.character(as_date(data$exam_date[data_nrow-1]) %m+% months(23))),
     ### MCI + NL
     data_nrow > 1 &&
-      data$uds_dx[data_nrow-1] %in% mci_codes &&
-      data$uds_dx[data_nrow] %in% nl_codes ~
+      data$uds_dx[data_nrow-1] == "MCI" &&
+      data$uds_dx[data_nrow] == "Normal" ~
       paste(
         "Schedule next scan ~",
-        as.character(as_date(data$exam_date[data_nrow]) + months(11))),
+        as.character(as_date(data$exam_date[data_nrow]) %m+% months(11))),
     ### XXX + MCI
     data_nrow > 1 &&
-      data$uds_dx[data_nrow] %in% mci_codes ~
+      data$uds_dx[data_nrow] == "MCI" ~
       paste(
         "Schedule next scan ~",
-        as.character(as_date(data$exam_date[data_nrow]) + months(11))),
+        as.character(as_date(data$exam_date[data_nrow]) %m+% months(11))),
     ### XXX + Dem
     data_nrow > 1 &&
-      data$uds_dx[data_nrow] %in% dem_codes ~
+      data$uds_dx[data_nrow] == "Dementia" ~
       "Dementia Dx: Stop Scanning",
+    ### MCI + `NA`
+    data_nrow > 1 &&
+      data$uds_dx[data_nrow-1] == "MCI" &&
+      is.na(data$uds_dx[data_nrow]) ~
+      paste(
+        "Schedule next scan ~",
+        as.character(as_date(data$exam_date[data_nrow-1]) %m+% months(11))),
+    ### NL + `NA`
+    data_nrow > 1 &&
+      data$uds_dx[data_nrow-1] == "Normal" &&
+      is.na(data$uds_dx[data_nrow]) ~
+      paste(
+        "Schedule next scan ~",
+        as.character(as_date(data$exam_date[data_nrow-1]) %m+% months(23))),
     # catch-all
     TRUE ~ NA_character_
   )) %>% 
@@ -126,18 +160,33 @@ df_ms_mri_unnest <- df_ms_mri_nest_mut %>%
 
 
 # Write CSV ----
-write_csv(df_ms_mri_unnest, 
-          paste0("MRI_Schedule_Report_", Sys.Date(), ".csv"),
-          na = "")
+readr::write_csv(df_ms_mri_unnest, 
+                 "MRI_Schedule_Report.csv",
+                 na = "")
 
 
-
-
-
-
-
-
-
-
-
-
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
