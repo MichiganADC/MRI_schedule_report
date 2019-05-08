@@ -4,9 +4,7 @@
 .Ruserdata
 .DS_Store
 *.csv
-*.xls
-*.xlsx
+*.tsv
+*.xls*
 *.txt
-*.doc
-*.docx
-*.pdf
+*.doc*

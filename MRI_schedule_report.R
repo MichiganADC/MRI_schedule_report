@@ -3,12 +3,12 @@
 
 # Load useful libraries ----
 
-library(dplyr)
-library(readxl)
-library(readr)
-library(stringr)
-library(lubridate)
-library(rlang)
+suppressMessages( library(dplyr) )
+suppressMessages( library(readr) )
+suppressMessages( library(rlang) )
+suppressMessages( library(readxl) )
+suppressMessages( library(stringr) )
+suppressMessages( library(lubridate) )
 
 
 # Helpful globals and functions ----
@@ -32,14 +32,22 @@ json_ms_mri <-
   get_rc_data_api(token = REDCAP_API_TOKEN_MINDSET,
                   fields = fields_ms_mri,
                   vp = FALSE,
-                  # Filter for UMMAP period
-                  filterLogic = '([exam_date] >= "2017-03-01")')
+                  # Filter for UMMAP IDs during UMMAP period
+                  filterLogic = paste0("(",
+                                       "[subject_id] >= 'UM00000001'",
+                                       " AND ",
+                                       "[subject_id] <= 'UM00009999'",
+                                       " AND ",
+                                       "[exam_date] >= '2017-03-01'",
+                                       ")"))
 df_ms_mri <- jsonlite::fromJSON(json_ms_mri) %>% as_tibble() %>% na_if("")
 
-df_inelig <- read_csv("./zaid_inelig_ids_2.csv",
+df_inelig <- read_csv(paste0("~/Box Sync/Documents/",
+                             "MADC_gen/MRI_schedule_report/",
+                             "zaid_inelig_ids_cln.csv"),
                       col_types = cols(.default = col_character())) %>% 
   mutate(ptid = paste0("UM0000", ID))
-inelig_ids <- df_inelig %>% pull(ptid)
+inelig_ids <- df_inelig %>% pull(ptid) %>% sort() %>% unique()
 
 # Clean Data ----
 
@@ -161,7 +169,9 @@ df_ms_mri_unnest <- df_ms_mri_nest_mut %>%
 
 # Write CSV ----
 readr::write_csv(df_ms_mri_unnest, 
-                 "MRI_Schedule_Report.csv",
+                 paste0("~/Box Sync/Documents/",
+                        "MADC_gen/MRI_schedule_report/",
+                        "MRI_Schedule_Report.csv"),
                  na = "")
 
 
