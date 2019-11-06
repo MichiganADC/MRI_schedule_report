@@ -2,9 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
-.DS_Store
+.DSStore
 *.csv
 *.tsv
 *.xls*
 *.txt
 *.doc*
+*.pdf

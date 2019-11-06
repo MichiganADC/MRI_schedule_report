@@ -17,8 +17,8 @@ suppressMessages( library(lubridate) )
 # Helpful globals and functions ----
 cat(cyan("Loading globals and helpers...\n"))
 
-source("~/Box Sync/Documents/R_helpers/config.R")
-source("~/Box Sync/Documents/R_helpers/helpers.R")
+source("~/Box/Documents/R_helpers/config.R")
+source("~/Box/Documents/R_helpers/helpers.R")
 
 
 # Get Data ----
@@ -30,31 +30,44 @@ fields_ms_mri_raw <-
     , "exam_date"
     , "mri_date"
     , "uds_dx"
+    , "mri_elig_yn"
   )
 fields_ms_mri <- fields_ms_mri_raw %>% paste(collapse = ",")
 
 json_ms_mri <- 
-  get_rc_data_api(token = REDCAP_API_TOKEN_MINDSET,
-                  fields = fields_ms_mri,
-                  vp = FALSE,
-                  # Filter for UMMAP IDs during UMMAP period
-                  filterLogic = paste0("(",
-                                       "[subject_id] >= 'UM00000001'",
-                                       " AND ",
-                                       "[subject_id] <= 'UM00009999'",
-                                       " AND ",
-                                       "[exam_date] >= '2017-03-01'",
-                                       ")"))
+  export_redcap_records(
+    token = REDCAP_API_TOKEN_MINDSET,
+    fields = fields_ms_mri,
+    vp = TRUE,
+    # Filter for UMMAP IDs during UMMAP period
+    filterLogic = paste0("(",
+                         "[subject_id] >= 'UM00000001'",
+                         " AND ",
+                         "[subject_id] <= 'UM00009999'",
+                         " AND ",
+                         "[exam_date] >= '2017-03-01'",
+                         ")"))
 df_ms_mri <- jsonlite::fromJSON(json_ms_mri) %>% as_tibble() %>% na_if("")
 
 cat(cyan("Getting list of MRI-ineligible participants...\n"))
 
-df_inelig <- read_csv(paste0("~/Box Sync/Documents/",
+# Get MRI-ineligible IDs from MiNDSet's `mri_elig_yn == 0`
+df_inelig_ms <- df_ms_mri %>% 
+  filter(mri_elig_yn == '0') %>% 
+  select(subject_id, mri_elig_yn)
+inelig_ids_ms <- df_inelig_ms %>% pull(subject_id) %>% sort() %>% unique()
+
+# Get MRI-inelibible IDs from CSV
+df_inelig_csv <- read_csv(paste0("~/Box/Documents/",
                              "MADC_gen/MRI_schedule_report/",
                              "zaid_inelig_ids_cln.csv"),
-                      col_types = cols(.default = col_character())) %>% 
+                      col_types = cols(.default = col_character())) %>%
   mutate(ptid = paste0("UM", strrep("0", 8-nchar(ID)) , ID))
-inelig_ids <- df_inelig %>% pull(ptid) %>% sort() %>% unique()
+inelig_ids_csv <- df_inelig_csv %>% pull(ptid) %>% sort() %>% unique()
+
+# Join both vectors of ineligible IDs
+inelig_ids <- c(inelig_ids_ms, inelig_ids_ms) %>% sort() %>% unique()
+
 
 # Clean Data ----
 cat(cyan("Cleaning raw data...\n"))
@@ -90,7 +103,8 @@ cat(cyan("Processing data...\n"))
 
 # _ Nest all but `subject_id` (`exam_date`, `mri_date`, `uds_dx`) as df ----
 df_ms_mri_nest <- df_ms_mri_cln %>% 
-  tidyr::nest(-subject_id)
+  tidyr::nest(data = -c(subject_id))
+# tidyr::nest(data = c(exam_date, mri_date, uds_dx))
 
 # _ Derive `mri_action` based on data in nested df (`data`) ----
 # df_ms_mri_nest_mut <- df_ms_mri_nest %>%
@@ -209,7 +223,7 @@ df_ms_mri_unnest <- df_ms_mri_nest_mut %>%
 cat(cyan("Writing CSV file...\n"))
 
 readr::write_csv(df_ms_mri_unnest, 
-                 paste0("~/Box Sync/Documents/",
+                 paste0("~/Box/Documents/",
                         "MADC_gen/MRI_schedule_report/",
                         "MRI_Schedule_Report.csv"),
                  na = "")
