@@ -30,6 +30,8 @@ fields_ms_mri_raw <-
     , "exam_date"
     , "mri_date"
     , "uds_dx"
+    , "mri_elig_consent"
+    , "mri_elig_safety_screen"
     , "mri_elig_yn"
   )
 fields_ms_mri <- fields_ms_mri_raw %>% paste(collapse = ",")
@@ -52,8 +54,13 @@ df_ms_mri <- jsonlite::fromJSON(json_ms_mri) %>% as_tibble() %>% na_if("")
 cat(cyan("Getting list of MRI-ineligible participants...\n"))
 
 # Get MRI-ineligible IDs from MiNDSet's `mri_elig_yn == 0`
+# , "mri_elig_consent"
+# , "mri_elig_safety_screen"
+# , "mri_elig_yn"
 df_inelig_ms <- df_ms_mri %>% 
-  filter(mri_elig_yn == '0') %>% 
+  filter(mri_elig_consent == '1',
+         !is.na(mri_elig_safety_screen),
+         mri_elig_yn == '0') %>% 
   select(subject_id, mri_elig_yn)
 inelig_ids_ms <- df_inelig_ms %>% pull(subject_id) %>% sort() %>% unique()
 
