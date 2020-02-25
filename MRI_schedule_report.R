@@ -39,6 +39,7 @@ fields_ug_mri_raw <-
     , "mri_elig_consent"
     , "mri_elig_safety_screen"
     , "mri_elig_yn"
+    , "scan_05_func_rest_motion"  # Scan 5: func rest % Good Values
   )
 fields_ug_mri <- fields_ug_mri_raw %>% paste(collapse = ",")
 
@@ -52,8 +53,11 @@ json_ug_mri <-
                          "[subject_id] >= 'UM00000001'",
                          " AND ",
                          "[subject_id] <= 'UM00009999'",
-                         " AND ",
-                         "[exam_date] >= '2017-03-01'",
+                         # Remove exam_date filtering here
+                         # because some MRI Eligibility forms
+                         # completed before 2017
+                         # " AND ",
+                         # "[exam_date] >= '2017-03-01'",
                          ")"))
 df_ug_mri <- jsonlite::fromJSON(json_ug_mri) %>% as_tibble() %>% na_if("")
 
@@ -93,7 +97,8 @@ cat(cyan("Getting list of MRI-ineligible participants...\n"))
 
 # Get MRI-ineligible IDs from UMMAP General's `mri_elig_yn == 0`
 df_inelig_ug <- df_ug_mri %>% 
-  filter(mri_elig_consent == '1',
+  # Also need to retain when consent == 0, changed and to or
+  filter(!is.na(mri_elig_consent) |
          !is.na(mri_elig_safety_screen),
          mri_elig_yn == '0') %>% 
   select(subject_id, mri_elig_yn)
@@ -115,7 +120,8 @@ df_ug_mri_cln <- df_ug_mri %>%
   arrange(subject_id, exam_date) %>% 
   # select(subject_id, -redcap_event_name, exam_date, mri_date, uds_dx) %>% 
   select(subject_id, -redcap_event_name, exam_date, 
-         sex_value, race_value, mri_date, uds_dx) %>% 
+         sex_value, race_value, mri_date, uds_dx,
+         pct_good_val = scan_05_func_rest_motion) %>% 
   # rename `sex_value` and `race_value`
   rename(sex = sex_value, race = race_value) %>% 
   # mutate `sex`
@@ -143,7 +149,9 @@ df_ug_mri_cln <- df_ug_mri %>%
     TRUE ~ NA_character_
   )) %>% 
   # Clean out record that has double-assigned UM MAP ID :(
-  filter(!(subject_id == "UM00001353" & exam_date == "2017-05-01"))
+  filter(!(subject_id == "UM00001353" & exam_date == "2017-05-01")) %>% 
+  # Filter out exam date here
+  filter(exam_date >= '2017-03-01')
 
 # _ _ UMMAP UDS3 ----
 
@@ -162,6 +170,31 @@ df_mlstn_u3 <- df_u3 %>%
            (note_mlstn_type == 1 & protocol == 2))
 
 mlstn_ids_u3 <- df_mlstn_u3 %>% pull(ptid) %>% sort() %>% unique()
+
+# Since ineligible is getting more IDs now, need to override if ID has been
+# milestoned (i.e., milestoned takes priority)
+df_mlstn_ids_u3 <- as.data.frame(mlstn_ids_u3) %>% 
+  rename(subject_id = mlstn_ids_u3) %>% 
+  mutate(mlstn = 1)
+
+df_inelig_ids_ug <- as.data.frame(inelig_ids_ug) %>% 
+  rename(subject_id = inelig_ids_ug) %>% 
+  mutate(inelig = 1)
+
+df_mlstn_inelig_ids = full_join(df_mlstn_ids_u3, df_inelig_ids_ug)
+
+inelig_ids_ug <- df_mlstn_inelig_ids %>%
+  filter(inelig == 1,
+         is.na(mlstn)) %>% 
+  pull(subject_id) %>% 
+  sort() %>% 
+  unique()
+
+mlstn_ids_u3 <- df_mlstn_inelig_ids %>% 
+  filter(mlstn == 1) %>% 
+  pull(subject_id) %>% 
+  sort() %>% 
+  unique()
 
 
 # Process Data ----
