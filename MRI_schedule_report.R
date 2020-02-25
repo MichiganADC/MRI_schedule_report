@@ -173,15 +173,17 @@ mlstn_ids_u3 <- df_mlstn_u3 %>% pull(ptid) %>% sort() %>% unique()
 
 # Since ineligible is getting more IDs now, need to override if ID has been
 # milestoned (i.e., milestoned takes priority)
-df_mlstn_ids_u3 <- as.data.frame(mlstn_ids_u3) %>% 
+
+df_mlstn_ids_u3 <- tibble(mlstn_ids_u3) %>% 
   rename(subject_id = mlstn_ids_u3) %>% 
   mutate(mlstn = 1)
 
-df_inelig_ids_ug <- as.data.frame(inelig_ids_ug) %>% 
+df_inelig_ids_ug <- tibble(inelig_ids_ug) %>% 
   rename(subject_id = inelig_ids_ug) %>% 
   mutate(inelig = 1)
 
-df_mlstn_inelig_ids = full_join(df_mlstn_ids_u3, df_inelig_ids_ug)
+df_mlstn_inelig_ids <- full_join(df_mlstn_ids_u3, df_inelig_ids_ug, 
+                                by = "subject_id")
 
 inelig_ids_ug <- df_mlstn_inelig_ids %>%
   filter(inelig == 1,
