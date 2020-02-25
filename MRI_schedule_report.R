@@ -39,6 +39,7 @@ fields_ug_mri_raw <-
     , "mri_elig_consent"
     , "mri_elig_safety_screen"
     , "mri_elig_yn"
+    , "scan_05_func_rest_motion"  # Scan 5: func rest % Good Values
   )
 fields_ug_mri <- fields_ug_mri_raw %>% paste(collapse = ",")
 
@@ -115,7 +116,8 @@ df_ug_mri_cln <- df_ug_mri %>%
   arrange(subject_id, exam_date) %>% 
   # select(subject_id, -redcap_event_name, exam_date, mri_date, uds_dx) %>% 
   select(subject_id, -redcap_event_name, exam_date, 
-         sex_value, race_value, mri_date, uds_dx) %>% 
+         sex_value, race_value, mri_date, uds_dx,
+         pct_good_val = scan_05_func_rest_motion) %>% 
   # rename `sex_value` and `race_value`
   rename(sex = sex_value, race = race_value) %>% 
   # mutate `sex`
