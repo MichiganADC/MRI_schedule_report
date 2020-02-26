@@ -32,8 +32,9 @@ fields_ug_mri_raw <-
   c(
     "subject_id"
     , "exam_date"
-    , "sex_value"
-    , "race_value"
+    # Get from MiNDSet and not UM MAP General
+    # , "sex_value"
+    # , "race_value"
     , "mri_date"
     , "uds_dx"
     , "mri_elig_consent"
@@ -60,6 +61,37 @@ json_ug_mri <-
                          # "[exam_date] >= '2017-03-01'",
                          ")"))
 df_ug_mri <- jsonlite::fromJSON(json_ug_mri) %>% as_tibble() %>% na_if("")
+
+# - MiNDSet
+
+cat(cyan("Getting Demographic data from MiNDSet...\n"))
+
+fields_ms_mri_raw <-
+  c(
+    "subject_id"
+    , "sex_value"
+    , "race_value"
+  )
+fields_ms_mri <- fields_ms_mri_raw %>% paste(collapse = ",")
+
+json_ms_mri <- 
+  export_redcap_records(
+    token = REDCAP_API_TOKEN_MINDSET,
+    fields = fields_ms_mri,
+    vp = TRUE,
+    # Filter for UMMAP IDs during UMMAP period
+    filterLogic = paste0("(",
+                         "[subject_id] >= 'UM00000001'",
+                         " AND ",
+                         "[subject_id] <= 'UM00009999'",
+                         # Remove exam_date filtering here
+                         # because some MRI Eligibility forms
+                         # completed before 2017
+                         # " AND ",
+                         # "[exam_date] >= '2017-03-01'",
+                         ")"))
+
+df_ms_mri <- jsonlite::fromJSON(json_ms_mri) %>% as_tibble() %>% na_if("")
 
 # _ UMMAP UDS3
 
@@ -120,26 +152,9 @@ df_ug_mri_cln <- df_ug_mri %>%
   arrange(subject_id, exam_date) %>% 
   # select(subject_id, -redcap_event_name, exam_date, mri_date, uds_dx) %>% 
   select(subject_id, -redcap_event_name, exam_date, 
-         sex_value, race_value, mri_date, uds_dx,
+         # sex_value, race_value, 
+         mri_date, uds_dx,
          pct_good_val = scan_05_func_rest_motion) %>% 
-  # rename `sex_value` and `race_value`
-  rename(sex = sex_value, race = race_value) %>% 
-  # mutate `sex`
-  mutate(sex = case_when(
-    sex == 1 ~ "Male",
-    sex == 2 ~ "Female",
-    TRUE ~ NA_character_
-  )) %>% 
-  # mutate `race`
-  mutate(race = case_when(
-    race == 1 ~ "White",
-    race == 2 ~ "African American",
-    race == 3 ~ "Asian",
-    race == 4 ~ "Hispanic",
-    race == 5 ~ "Other",
-    race == 6 ~ "Unknown",
-    TRUE ~ NA_character_
-  )) %>% 
   # mutate `uds_dx` codes to English
   mutate(uds_dx = case_when(
     uds_dx %in% mci_codes ~ "MCI",
@@ -152,6 +167,29 @@ df_ug_mri_cln <- df_ug_mri %>%
   filter(!(subject_id == "UM00001353" & exam_date == "2017-05-01")) %>% 
   # Filter out exam date here
   filter(exam_date >= '2017-03-01')
+
+# Merge in sex_value and race_value from MiNDSet
+df_ug_mri_cln <- left_join(df_ug_mri_cln, 
+                           df_ms_mri, 
+                           by = "subject_id") %>%   
+  # rename `sex_value` and `race_value`
+  rename(sex = sex_value, race = race_value) %>% 
+    # mutate `sex`
+    mutate(sex = case_when(
+      sex == 1 ~ "Male",
+      sex == 2 ~ "Female",
+      TRUE ~ NA_character_
+    )) %>% 
+    # mutate `race`
+    mutate(race = case_when(
+      race == 1 ~ "White",
+      race == 2 ~ "African American",
+      race == 3 ~ "Asian",
+      race == 4 ~ "Hispanic",
+      race == 5 ~ "Other",
+      race == 6 ~ "Unknown",
+      TRUE ~ NA_character_
+    ))
 
 # _ _ UMMAP UDS3 ----
 
