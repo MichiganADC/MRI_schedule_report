@@ -48,7 +48,8 @@ json_ug_mri <-
   export_redcap_records(
     token = REDCAP_API_TOKEN_UMMAP_GEN,
     fields = fields_ug_mri,
-    vp = TRUE,
+    # vp = TRUE,
+    vp = FALSE,
     # Filter for UMMAP IDs during UMMAP period
     filterLogic = paste0("(",
                          "[subject_id] >= 'UM00000001'",
@@ -78,7 +79,8 @@ json_ms_mri <-
   export_redcap_records(
     token = REDCAP_API_TOKEN_MINDSET,
     fields = fields_ms_mri,
-    vp = TRUE,
+    # vp = TRUE,
+    vp = FALSE,
     # Filter for UMMAP IDs during UMMAP period
     filterLogic = paste0("(",
                          "[subject_id] >= 'UM00000001'",
@@ -107,7 +109,8 @@ json_u3 <-
   export_redcap_records(
     token = REDCAP_API_TOKEN_UDS3n,
     fields = fields_u3,
-    vp = TRUE,
+    # vp = TRUE,
+    vp = FALSE,
     # Filter for UMMAP IDs during UMMAP period
     filterLogic = paste0("(",
                          "[ptid] >= 'UM00000001'",
@@ -131,7 +134,7 @@ cat(cyan("Getting list of MRI-ineligible participants...\n"))
 df_inelig_ug <- df_ug_mri %>% 
   # Also need to retain when consent == 0, changed and to or
   filter(!is.na(mri_elig_consent) |
-         !is.na(mri_elig_safety_screen),
+           !is.na(mri_elig_safety_screen),
          mri_elig_yn == '0') %>% 
   select(subject_id, mri_elig_yn)
 inelig_ids_ug <- df_inelig_ug %>% pull(subject_id) %>% sort() %>% unique()
@@ -174,22 +177,22 @@ df_ug_mri_cln <- left_join(df_ug_mri_cln,
                            by = "subject_id") %>%   
   # rename `sex_value` and `race_value`
   rename(sex = sex_value, race = race_value) %>% 
-    # mutate `sex`
-    mutate(sex = case_when(
-      sex == 1 ~ "Male",
-      sex == 2 ~ "Female",
-      TRUE ~ NA_character_
-    )) %>% 
-    # mutate `race`
-    mutate(race = case_when(
-      race == 1 ~ "White",
-      race == 2 ~ "African American",
-      race == 3 ~ "Asian",
-      race == 4 ~ "Hispanic",
-      race == 5 ~ "Other",
-      race == 6 ~ "Unknown",
-      TRUE ~ NA_character_
-    ))
+  # mutate `sex`
+  mutate(sex = case_when(
+    sex == 1 ~ "Male",
+    sex == 2 ~ "Female",
+    TRUE ~ NA_character_
+  )) %>% 
+  # mutate `race`
+  mutate(race = case_when(
+    race == 1 ~ "White",
+    race == 2 ~ "African American",
+    race == 3 ~ "Asian",
+    race == 4 ~ "Hispanic",
+    race == 5 ~ "Other",
+    race == 6 ~ "Unknown",
+    TRUE ~ NA_character_
+  ))
 
 # _ _ UMMAP UDS3 ----
 
@@ -221,7 +224,7 @@ df_inelig_ids_ug <- tibble(inelig_ids_ug) %>%
   mutate(inelig = 1)
 
 df_mlstn_inelig_ids <- full_join(df_mlstn_ids_u3, df_inelig_ids_ug, 
-                                by = "subject_id")
+                                 by = "subject_id")
 
 inelig_ids_ug <- df_mlstn_inelig_ids %>%
   filter(inelig == 1,
@@ -253,6 +256,12 @@ suppressWarnings(
   df_ug_mri_nest_mut <- df_ug_mri_nest %>%
     rowwise() %>%
     mutate(data_nrow = nrow(data)) %>% 
+    mutate(dx_max_row = case_when(
+      all(is.na(data$uds_dx)) ~ NA_integer_,
+      any(!is.na(data$uds_dx)) ~ 
+        # Last non-NA value in `data$uds_dx` column
+          length(data$uds_dx[!is.na(data$uds_dx)])
+    )) %>% 
     mutate(mri_max_row = case_when(
       all(is.na(data$mri_date)) ~ NA_integer_,
       any(!is.na(data$mri_date)) ~ 
@@ -261,6 +270,7 @@ suppressWarnings(
         ),
       TRUE ~ NA_integer_
     )) %>% 
+    mutate(recent_dx = data$uds_dx[dx_max_row]) %>% 
     mutate(mri_action = case_when(
       # MRI-ineligible participants
       subject_id %in% inelig_ids_ug ~ "Ineligible",
@@ -337,20 +347,30 @@ suppressWarnings(
 # _ Unnest nested data and reshape/clean for easier digestion ----
 
 df_ug_mri_unnest <- df_ug_mri_nest_mut %>% 
-  select(-data_nrow, -mri_max_row) %>% 
+  select(-data_nrow, -mri_max_row, -dx_max_row) %>% 
   tidyr::unnest(data) %>% 
   calculate_visit_num(subject_id, exam_date) %>% 
-  tidyr::gather(-subject_id, -visit_num, -sex, -race, 
+  tidyr::gather(-subject_id, -visit_num, -sex, -race,
                 key = "key", value = "value") %>% 
   tidyr::unite("key__visit_num", key, visit_num, sep = "__") %>% 
   tidyr::spread(key = key__visit_num, value = value) %>% 
+  mutate(recent_dx = 
+           coalesce(
+             !!!syms(
+               tidyselect::vars_select(names(.), starts_with("recent_dx__"))
+             )
+           )
+         ) %>% 
   mutate(mri_action = 
            coalesce(
              !!!syms(
-               tidyselect::vars_select(names(.), 
-                                       starts_with("mri_action__"))))) %>% 
+               tidyselect::vars_select(names(.), starts_with("mri_action__"))
+             )
+           )
+         ) %>% 
+  select(-starts_with("recent_dx__")) %>% 
   select(-starts_with("mri_action__")) %>% 
-  select(subject_id, mri_action, everything())
+  select(subject_id, mri_action, recent_dx, everything())
 
 # _ Calculate MRI priority score
 df_ug_mri_unnest <- df_ug_mri_unnest %>% 
